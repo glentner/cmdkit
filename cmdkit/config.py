@@ -16,6 +16,7 @@ from typing import IO, Tuple, List, Dict, NamedTuple, TypeVar, Callable, Union, 
 import os
 import functools
 import subprocess
+from collections import Counter
 from collections.abc import Mapping
 from functools import reduce
 
@@ -259,6 +260,21 @@ class Namespace(NSCoreMixin):
     def to_env(self) -> Environ:
         """Translate namespace to an :class:`Environ` namespace."""
         return Environ(defaults=self)
+
+    def duplicates(self) -> Dict[str, List[Tuple[str, ...]]]:
+        """
+        Find all the repeated `leaves`.
+
+        Example:
+            >>> ns = Namespace({'a': {'x': 1, 'y': 2}, 'b': {'x': 3, 'z': 4}})
+            >>> ns
+            Namespace({'a': {'x': 1, 'y': 2}, 'b': {'x': 3, 'z': 4}})
+
+            >>> ns.duplicates()
+            {'x': [('a',), ('b',)]}
+        """
+        tips = [tip for _, (*_, tip) in _find_the_leaves(self)]
+        return {tip: self.whereis(tip) for tip, count in Counter(tips).items() if count > 1}
 
     def whereis(self, leaf: str, value: Union[Callable[[T], bool], T] = lambda _: True) -> List[Tuple[str, ...]]:
         """
@@ -548,6 +564,19 @@ class Configuration(NSCoreMixin):
         """
         Derive which member namespace takes precedent for the given variable.
 
+        Note:  Care needs to be taken when used for mutable variables in the 
+               stack as the returned precedent does not reflect that the variable
+               at that level my be a depth-first-merge of several sources.
+
+               >>> conf = Configuration(one=Namespace({'a': {'x': 1, 'y': 2}}),
+               ...                      two=Namespace({'a': {'y': 3}})
+
+               >>> conf.which('a')
+               'two'
+
+               >>> conf.a
+               Namespace({'x': 1, 'y': 3})
+
         Example:
             >>> conf = Configuration(one=Namespace({'x': 1, 'y': 2}),
             ...                      two=Namespace({'x': 3, 'z': 4})
@@ -573,6 +602,21 @@ class Configuration(NSCoreMixin):
                 pass
         else:
             raise KeyError(f'Not found: {path}')
+
+    def duplicates(self) -> Dict[str, Dict[str, List[Tuple[str, ...]]]]:
+        """
+        Find all the repeated `leaves`.
+
+        Example:
+            >>> one = Namespace({'a': {'x': 1, 'y': 2}, 'b': {'x': 3, 'z': 4}})
+            >>> two = Namespace({'b': {'x': 4, 'z': 2}, 'c': {'j': True, 'k': 3.14}})
+            >>> cfg = Configuration(one=one, two=two)
+
+            >>> cfg.duplicates()
+            {'x': {'one': [('a',), ('b',)], 'two': [('b',)]}, 'z': {'one': [('b',)], 'two': [('b',)]}}
+        """
+        tips = [tip for _, (*_, tip) in _find_the_leaves(self.namespaces)]
+        return {tip: self.whereis(tip) for tip, count in Counter(tips).items() if count > 1}  
 
     def whereis(self, leaf: str,
                 value: Union[Callable[[T], bool], T] = lambda _: True) -> Dict[str, List[Tuple[str, ...]]]:
@@ -636,3 +680,19 @@ class Configuration(NSCoreMixin):
         """
         self.local.update(*args, **kwargs)
         super().update(*args, **kwargs)
+
+    @classmethod
+    def pop(cls, *args, **kwargs):
+        """
+        It is not straight forward to implement the equivalent of super().update() for
+        the general case; currently disallow pop() on `Configuration`.
+        """
+        raise NotImplementedError(f'{cls.__class__.__name__} does not currently support pop()')
+    
+    @classmethod
+    def popitem(cls):
+        """
+        It is not straight forward to implement the equivalent of super().update() for
+        the general case; currently disallow popitem() on `Configuration`.
+        """
+        raise NotImplementedError(f'{cls.__class__.__name__} does not currently support popitem()')
